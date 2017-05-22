@@ -16,292 +16,237 @@
 
 package org.gaul.areweconsistentyet;
 
-import static java.util.Objects.requireNonNull;
-
-import static com.google.common.base.Preconditions.checkArgument;
-
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.PrintStream;
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Properties;
-import java.util.Random;
-import java.util.Set;
-
 import com.google.common.collect.ImmutableList;
 import com.google.common.io.ByteSource;
 import com.google.common.io.ByteStreams;
 import com.google.inject.Module;
-
 import org.jclouds.Constants;
 import org.jclouds.ContextBuilder;
+import org.jclouds.aws.s3.AWSS3ProviderMetadata;
+import org.jclouds.aws.s3.blobstore.AWSS3BlobStoreContext;
 import org.jclouds.blobstore.BlobStore;
 import org.jclouds.blobstore.BlobStoreContext;
 import org.jclouds.blobstore.domain.Blob;
 import org.jclouds.blobstore.domain.PageSet;
 import org.jclouds.blobstore.domain.StorageMetadata;
 import org.jclouds.blobstore.options.ListContainerOptions;
-import org.jclouds.domain.Location;
 import org.jclouds.io.Payload;
 import org.jclouds.logging.slf4j.config.SLF4JLoggingModule;
-import org.kohsuke.args4j.CmdLineException;
-import org.kohsuke.args4j.CmdLineParser;
 import org.kohsuke.args4j.Option;
 
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.*;
+
+import static com.google.common.base.Preconditions.checkArgument;
+import static java.util.Objects.requireNonNull;
+
 public final class AreWeConsistentYet {
-    private final ByteSource payload1;
-    private final ByteSource payload2;
-    private final BlobStore blobStore;
-    private final BlobStore blobStoreRead;
-    private final String containerName;
-    private final int iterations;
-    private final Random random = new Random();
+	static String accessKey = "ENTER_AWS_ACCESS_KEY"; //System.getProperty("AWS_ACCESS_KEY");
+	static String secretKey = "ENTER_AWS_SECRET_KEY"; //System.getProperty("AWS_SECRET_KEY");
+	private final ByteSource payload1;
+	private final ByteSource payload2;
+	private final BlobStore blobStore;
+	private final BlobStore blobStoreRead;
+	private final String bucketName;
+	private final int iterations;
+	private final Random random = new Random();
 
-    public AreWeConsistentYet(BlobStore blobStore,
-            BlobStore blobStoreRead, String containerName, int iterations,
-            long objectSize) {
-        this.blobStore = requireNonNull(blobStore);
-        this.blobStoreRead = requireNonNull(blobStoreRead);
-        this.containerName = requireNonNull(containerName);
-        checkArgument(iterations > 0,
-                "iterations must be greater than zero, was: " + iterations);
-        this.iterations = iterations;
-        checkArgument(objectSize > 0,
-                "object size must be greater than zero, was: " + objectSize);
-        payload1 = Utils.infiniteByteSource((byte) 1).slice(0, objectSize);
-        payload2 = Utils.infiniteByteSource((byte) 2).slice(0, objectSize);
-    }
+	public AreWeConsistentYet(BlobStore blobStore,
+	                          BlobStore blobStoreRead, String bucketName, int iterations,
+	                          long objectSize) {
+		this.blobStore = requireNonNull(blobStore);
+		this.blobStoreRead = requireNonNull(blobStoreRead);
+		this.bucketName = requireNonNull(bucketName);
+		checkArgument(iterations > 0,
+				"iterations must be greater than zero, was: " + iterations);
+		this.iterations = iterations;
+		checkArgument(objectSize > 0,
+				"object size must be greater than zero, was: " + objectSize);
+		payload1 = Utils.infiniteByteSource((byte) 1).slice(0, objectSize);
+		payload2 = Utils.infiniteByteSource((byte) 2).slice(0, objectSize);
+	}
 
-    public int readAfterCreate() throws IOException {
-        int count = 0;
-        for (int i = 0; i < iterations; ++i) {
-            String blobName = makeBlobName();
-            blobStore.putBlob(containerName, makeBlob(blobName, payload1));
-            Blob getBlob = blobStoreRead.getBlob(containerName, blobName);
-            if (getBlob == null) {
-                ++count;
-            } else {
-                try (Payload payload = getBlob.getPayload();
-                     InputStream is = payload.openStream()) {
-                    ByteStreams.copy(is, ByteStreams.nullOutputStream());
-                }
-            }
-            blobStore.removeBlob(containerName, blobName);
-        }
-        return count;
-    }
+	public static void main(String[] args) throws Exception {
+		if (accessKey == null || secretKey == null) {
+			System.err.println("no access key or secret defined");
+			System.exit(1);
+		}
+		ContextBuilder builder = ContextBuilder.newBuilder(AWSS3ProviderMetadata.builder().build())
+				.credentials(accessKey, secretKey)
+				.modules(ImmutableList.<Module>of(new SLF4JLoggingModule()));
+		BlobStoreContext context = builder.build(AWSS3BlobStoreContext.class);
+		BlobStoreContext contextRead = builder.build(AWSS3BlobStoreContext.class);
+		BlobStore blobStore = context.getBlobStore();
+		BlobStore blobStoreRead = contextRead.getBlobStore();
+		int iterations = 5;
+		String containerName = "consistencytest134";
+		long objectSize = 1L;
 
-    public int readAfterDelete() throws IOException {
-        int count = 0;
-        for (int i = 0; i < iterations; ++i) {
-            String blobName = makeBlobName();
-            blobStoreRead.putBlob(containerName, makeBlob(blobName, payload1));
-            blobStore.removeBlob(containerName, blobName);
-            Blob getBlob = blobStoreRead.getBlob(containerName, blobName);
-            if (getBlob != null) {
-                ++count;
-                try (Payload payload = getBlob.getPayload();
-                     InputStream is = payload.openStream()) {
-                    ByteStreams.copy(is, ByteStreams.nullOutputStream());
-                }
-            }
-        }
-        return count;
-    }
+		AreWeConsistentYet test = new AreWeConsistentYet(blobStore, blobStoreRead, containerName, iterations, objectSize);
+		System.out.println("eventual consistency count with " + iterations + " iterations: ");
+		System.out.println("read after create: " + test.readAfterCreate());
+		System.out.println("read after delete: " + test.readAfterDelete());
+		System.out.println("read after overwrite: " + test.readAfterOverwrite());
+		System.out.println("list after create: " + test.listAfterCreate());
+		System.out.println("list after delete: " + test.listAfterDelete());
+	}
 
-    public int readAfterOverwrite() throws IOException {
-        int count = 0;
-        for (int i = 0; i < iterations; ++i) {
-            String blobName = makeBlobName();
-            blobStore.putBlob(containerName, makeBlob(blobName, payload1));
-            blobStore.putBlob(containerName, makeBlob(blobName, payload2));
-            Blob getBlob = blobStoreRead.getBlob(containerName, blobName);
-            if (getBlob == null) {
-                ++count;
-                continue;
-            }
-            try (Payload payload = getBlob.getPayload();
-                 InputStream is = payload.openStream()) {
-                if (Arrays.equals(payload1.read(), ByteStreams.toByteArray(
-                        is))) {
-                    ++count;
-                }
-            }
-            blobStore.removeBlob(containerName, blobName);
-        }
-        return count;
-    }
+	private static BlobStoreContext blobStoreContextFromProperties(Properties properties) {
+		String provider = "aws-s3";
+		String identity = "AWS_ACCESS_KEY";
+		String credential = "AWS_SECRET_KEY";
+		String endpoint = properties.getProperty(Constants.PROPERTY_ENDPOINT);
+		if (provider == null || identity == null || credential == null) {
+			System.err.println("Properties file must contain:\n" +
+					Constants.PROPERTY_PROVIDER + "\n" +
+					Constants.PROPERTY_IDENTITY + "\n" +
+					Constants.PROPERTY_CREDENTIAL);
+			System.exit(1);
+		}
 
-    public int listAfterCreate() throws IOException {
-        int count = 0;
-        for (int i = 0; i < iterations; ++i) {
-            String blobName = makeBlobName();
-            blobStore.putBlob(containerName, makeBlob(blobName, payload1));
-            if (!listAllBlobs().contains(blobName)) {
-                ++count;
-            }
-            blobStore.removeBlob(containerName, blobName);
-        }
-        return count;
-    }
+		ContextBuilder builder = ContextBuilder
+				.newBuilder(provider)
+				.credentials(identity, credential)
+				.modules(ImmutableList.<Module>of(new SLF4JLoggingModule()))
+				.overrides(properties);
+		if (endpoint != null) {
+			builder = builder.endpoint(endpoint);
+		}
+		return builder.build(BlobStoreContext.class);
+	}
 
-    public int listAfterDelete() throws IOException {
-        int count = 0;
-        for (int i = 0; i < iterations; ++i) {
-            String blobName = makeBlobName();
-            blobStoreRead.putBlob(containerName, makeBlob(blobName, payload1));
-            blobStore.removeBlob(containerName, blobName);
-            if (listAllBlobs().contains(blobName)) {
-                ++count;
-            }
-        }
-        return count;
-    }
+	public int readAfterCreate() throws IOException {
+		int count = 0;
+		for (int i = 0; i < iterations; ++i) {
+			String blobName = makeBlobName();
+			blobStore.putBlob(bucketName, makeBlob(blobName, payload1));
+			Blob getBlob = blobStoreRead.getBlob(bucketName, blobName);
+			if (getBlob == null) {
+				++count;
+			}
+			blobStore.removeBlob(bucketName, blobName);
+		}
+		return count;
+	}
 
-    private String makeBlobName() {
-        return "blob-name-" + random.nextInt();
-    }
+	public int readAfterDelete() throws IOException {
+		int count = 0;
+		for (int i = 0; i < iterations; ++i) {
+			String blobName = makeBlobName();
+			blobStoreRead.putBlob(bucketName, makeBlob(blobName, payload1));
+			blobStore.removeBlob(bucketName, blobName);
+			Blob getBlob = blobStoreRead.getBlob(bucketName, blobName);
+			if (getBlob != null) {
+				++count;
+				try (Payload payload = getBlob.getPayload();
+				     InputStream is = payload.openStream()) {
+					ByteStreams.copy(is, ByteStreams.nullOutputStream());
+				}
+			}
+		}
+		return count;
+	}
 
-    private Blob makeBlob(String blobName, ByteSource payload)
-            throws IOException {
-        return blobStore.blobBuilder(blobName)
-                .payload(payload)
-                .contentLength(payload.size())
-                .build();
-    }
+	public int readAfterOverwrite() throws IOException {
+		int count = 0;
+		for (int i = 0; i < iterations; ++i) {
+			String blobName = makeBlobName();
+			blobStore.putBlob(bucketName, makeBlob(blobName, payload1));
+			blobStore.putBlob(bucketName, makeBlob(blobName, payload2));
+			Blob getBlob = blobStoreRead.getBlob(bucketName, blobName);
+			if (getBlob == null) {
+				++count;
+				continue;
+			}
+			try (Payload payload = getBlob.getPayload();
+			     InputStream is = payload.openStream()) {
+				if (Arrays.equals(payload1.read(), ByteStreams.toByteArray(
+						is))) {
+					++count;
+				}
+			}
+			blobStore.removeBlob(bucketName, blobName);
+		}
+		return count;
+	}
 
-    private Set<String> listAllBlobs() {
-        Set<String> blobNames = new HashSet<String>();
-        ListContainerOptions options = new ListContainerOptions();
-        while (true) {
-            PageSet<? extends StorageMetadata> set = blobStoreRead.list(
-                    containerName, options);
-            for (StorageMetadata sm : set) {
-                blobNames.add(sm.getName());
-            }
-            String marker = set.getNextMarker();
-            if (marker == null) {
-                break;
-            }
-            options = options.afterMarker(marker);
-        }
-        return blobNames;
-    }
+	public int listAfterCreate() throws IOException {
+		int count = 0;
+		for (int i = 0; i < iterations; ++i) {
+			String blobName = makeBlobName();
+			blobStore.putBlob(bucketName, makeBlob(blobName, payload1));
+			if (!listAllBlobs().contains(blobName)) {
+				++count;
+			}
+			blobStore.removeBlob(bucketName, blobName);
+		}
+		return count;
+	}
 
-    static final class Options {
-        @Option(name = "--container-name",
-                usage = "container name for tests, will be created and removed",
-                required = true)
-        private String containerName;
+	public int listAfterDelete() throws IOException {
+		int count = 0;
+		for (int i = 0; i < iterations; ++i) {
+			String blobName = makeBlobName();
+			blobStoreRead.putBlob(bucketName, makeBlob(blobName, payload1));
+			blobStore.removeBlob(bucketName, blobName);
+			if (listAllBlobs().contains(blobName)) {
+				++count;
+			}
+		}
+		return count;
+	}
 
-        @Option(name = "--iterations",
-                usage = "number of iterations (default: 1)")
-        private int iterations = 1;
+	private String makeBlobName() {
+		return "blob-name-" + random.nextInt();
+	}
 
-        @Option(name = "--location", usage = "container location")
-        private String location;
+	private Blob makeBlob(String blobName, ByteSource payload)
+			throws IOException {
+		return blobStore.blobBuilder(blobName)
+				.payload(payload)
+				.contentLength(payload.size())
+				.build();
+	}
 
-        @Option(name = "--size", usage = "object size in bytes (default: 1)")
-        private long objectSize = 1;
+	private Set<String> listAllBlobs() {
+		Set<String> blobNames = new HashSet<String>();
+		ListContainerOptions options = new ListContainerOptions();
+		while (true) {
+			PageSet<? extends StorageMetadata> set = blobStoreRead.list(
+					bucketName, options);
+			for (StorageMetadata sm : set) {
+				blobNames.add(sm.getName());
+			}
+			String marker = set.getNextMarker();
+			if (marker == null) {
+				break;
+			}
+			options = options.afterMarker(marker);
+		}
+		return blobNames;
+	}
 
-        @Option(name = "--properties", usage = "configuration file",
-                required = true)
-        private File propertiesFile;
+	static final class Options {
+		@Option(name = "--container-name",
+				usage = "container name for tests, will be created and removed",
+				required = true)
+		private String containerName;
 
-        @Option(name = "--reader-endpoint",
-                usage = "separate endpoint to read from")
-        private String readerEndpoint;
-    }
+		@Option(name = "--iterations", usage = "number of iterations (default: 1)")
+		private int iterations = 1;
 
-    public static void main(String[] args) throws Exception {
-        Options options = new Options();
-        CmdLineParser parser = new CmdLineParser(options);
-        try {
-            parser.parseArgument(args);
-        } catch (CmdLineException cle) {
-            PrintStream err = System.err;
-            err.println("are-we-consistent-yet version " +
-                    AreWeConsistentYet.class.getPackage()
-                            .getImplementationVersion());
-            err.println("Usage: are-we-consistent-yet" +
-                    " --container-name NAME --properties FILE [options...]");
-            parser.printUsage(err);
-            System.exit(1);
-        }
+		@Option(name = "--location", usage = "container location")
+		private String location;
 
-        Properties properties = new Properties();
-        try (InputStream is = new FileInputStream(options.propertiesFile)) {
-            properties.load(is);
-        }
-        Properties propertiesRead = (Properties) properties.clone();
-        if (options.readerEndpoint != null) {
-            propertiesRead.setProperty(Constants.PROPERTY_ENDPOINT,
-                    options.readerEndpoint);
-        }
+		@Option(name = "--size", usage = "object size in bytes (default: 1)")
+		private long objectSize = 1;
 
-        try (BlobStoreContext context = blobStoreContextFromProperties(
-                     properties);
-             BlobStoreContext contextRead = blobStoreContextFromProperties(
-                     propertiesRead)) {
-            BlobStore blobStore = context.getBlobStore();
-            BlobStore blobStoreRead = contextRead.getBlobStore();
+		@Option(name = "--properties", usage = "configuration file")
+		private File propertiesFile;
 
-            Location location = null;
-            if (options.location != null) {
-                for (Location loc : blobStore.listAssignableLocations()) {
-                    if (loc.getId().equalsIgnoreCase(options.location)) {
-                        location = loc;
-                        break;
-                    }
-                }
-                if (location == null) {
-                    throw new Exception("Could not find location: " +
-                            options.location);
-                }
-            }
-            blobStore.createContainerInLocation(location,
-                    options.containerName);
-            AreWeConsistentYet test = new AreWeConsistentYet(
-                    blobStore, blobStoreRead, options.containerName,
-                    options.iterations, options.objectSize);
-            PrintStream out = System.out;
-            out.println("eventual consistency count with " +
-                    options.iterations + " iterations: ");
-            out.println("read after create: " + test.readAfterCreate());
-            out.println("read after delete: " + test.readAfterDelete());
-            out.println("read after overwrite: " + test.readAfterOverwrite());
-            out.println("list after create: " + test.listAfterCreate());
-            out.println("list after delete: " + test.listAfterDelete());
-            blobStore.deleteContainer(options.containerName);
-        }
-    }
-
-    private static BlobStoreContext blobStoreContextFromProperties(
-            Properties properties) {
-        String provider = properties.getProperty(Constants.PROPERTY_PROVIDER);
-        String identity = properties.getProperty(Constants.PROPERTY_IDENTITY);
-        String credential = properties.getProperty(
-                Constants.PROPERTY_CREDENTIAL);
-        String endpoint = properties.getProperty(Constants.PROPERTY_ENDPOINT);
-        if (provider == null || identity == null || credential == null) {
-            System.err.println("Properties file must contain:\n" +
-                    Constants.PROPERTY_PROVIDER + "\n" +
-                    Constants.PROPERTY_IDENTITY + "\n" +
-                    Constants.PROPERTY_CREDENTIAL);
-            System.exit(1);
-        }
-
-        ContextBuilder builder = ContextBuilder
-                .newBuilder(provider)
-                .credentials(identity, credential)
-                .modules(ImmutableList.<Module>of(new SLF4JLoggingModule()))
-                .overrides(properties);
-        if (endpoint != null) {
-            builder = builder.endpoint(endpoint);
-        }
-        return builder.build(BlobStoreContext.class);
-    }
+		@Option(name = "--reader-endpoint", usage = "separate endpoint to read from")
+		private String readerEndpoint;
+	}
 }

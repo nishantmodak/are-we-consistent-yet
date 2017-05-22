@@ -16,13 +16,12 @@
 
 package org.gaul.areweconsistentyet;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import com.google.common.collect.ImmutableList;
 import com.google.common.io.Closer;
 import com.google.inject.Module;
-
 import org.jclouds.ContextBuilder;
+import org.jclouds.aws.s3.AWSS3ProviderMetadata;
+import org.jclouds.aws.s3.blobstore.AWSS3BlobStoreContext;
 import org.jclouds.blobstore.BlobStore;
 import org.jclouds.blobstore.BlobStoreContext;
 import org.jclouds.domain.Location;
@@ -31,73 +30,73 @@ import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 public final class AreWeConsistentYetTest {
-    private static final int ITERATIONS = 1;
-    private static final int OBJECT_SIZE = 1;
-    // model eventual consistency with two stores that never reconcile
-    private BlobStoreContext context;
-    private BlobStoreContext contextRead;
-    private AreWeConsistentYet awcyStrong;
-    private AreWeConsistentYet awcyEventual;
+	private static final int ITERATIONS = 5;
+	private static final int OBJECT_SIZE = 1;
+	// model eventual consistency with two stores that never reconcile
+	private BlobStoreContext context;
+	private BlobStoreContext contextRead;
+	private AreWeConsistentYet awcyStrong;
+	private AreWeConsistentYet awcyEventual;
 
-    @Before
-    public void setUp() throws Exception {
-        ContextBuilder builder = ContextBuilder
-                .newBuilder("transient")
-                .credentials("identity", "credential")
-                .modules(ImmutableList.<Module>of(new SLF4JLoggingModule()));
-        context = builder.build(BlobStoreContext.class);
-        contextRead = builder.build(BlobStoreContext.class);
+	@Before
+	public void setUp() throws Exception {
+		ContextBuilder builder = ContextBuilder.newBuilder(AWSS3ProviderMetadata.builder().build())
+				.credentials("AWS_ACCESS_KEY", "AWS_SECRET_KEY")
+				.modules(ImmutableList.<Module>of(new SLF4JLoggingModule()));
+		context = builder.build(AWSS3BlobStoreContext.class);
+		contextRead = builder.build(AWSS3BlobStoreContext.class);
 
-        BlobStore blobStore = context.getBlobStore();
-        BlobStore blobStoreRead = contextRead.getBlobStore();
 
-        String containerName = "container-name";
-        Location location = null;
-        blobStore.createContainerInLocation(location, containerName);
-        blobStoreRead.createContainerInLocation(location, containerName);
+		BlobStore blobStore = context.getBlobStore();
+		BlobStore blobStoreRead = contextRead.getBlobStore();
 
-        awcyStrong = new AreWeConsistentYet(blobStore,
-                blobStore, containerName, ITERATIONS, OBJECT_SIZE);
-        awcyEventual = new AreWeConsistentYet(blobStore,
-                blobStoreRead, containerName, ITERATIONS, OBJECT_SIZE);
-    }
+		String bucketName = "bucket-name";
+		Location location = null;
+		blobStore.createContainerInLocation(location, bucketName);
+		blobStoreRead.createContainerInLocation(location, bucketName);
 
-    @After
-    public void tearDown() throws Exception {
-        try (Closer closer = Closer.create()) {
-            closer.register(context);
-            closer.register(contextRead);
-        }
-    }
+		awcyStrong = new AreWeConsistentYet(blobStore, blobStore, bucketName, ITERATIONS, OBJECT_SIZE);
+		awcyEventual = new AreWeConsistentYet(blobStore, blobStoreRead, bucketName, ITERATIONS, OBJECT_SIZE);
+	}
 
-    @Test
-    public void testReadAfterCreate() throws Exception {
-        assertThat(awcyStrong.readAfterCreate()).isEqualTo(0);
-        assertThat(awcyEventual.readAfterCreate()).isEqualTo(ITERATIONS);
-    }
+	@After
+	public void tearDown() throws Exception {
+		try (Closer closer = Closer.create()) {
+			closer.register(context);
+			closer.register(contextRead);
+		}
+	}
 
-    @Test
-    public void testReadAfterDelete() throws Exception {
-        assertThat(awcyStrong.readAfterDelete()).isEqualTo(0);
-        assertThat(awcyEventual.readAfterDelete()).isEqualTo(ITERATIONS);
-    }
+	@Test
+	public void testReadAfterCreate() throws Exception {
+		assertThat(awcyStrong.readAfterCreate()).isEqualTo(0);
+		assertThat(awcyEventual.readAfterCreate()).isEqualTo(0);
+	}
 
-    @Test
-    public void testReadAfterOverwrite() throws Exception {
-        assertThat(awcyStrong.readAfterOverwrite()).isEqualTo(0);
-        assertThat(awcyEventual.readAfterOverwrite()).isEqualTo(ITERATIONS);
-    }
+	@Test
+	public void testReadAfterDelete() throws Exception {
+		assertThat(awcyStrong.readAfterDelete()).isEqualTo(0);
+		assertThat(awcyEventual.readAfterDelete()).isEqualTo(0);
+	}
 
-    @Test
-    public void testListAfterCreate() throws Exception {
-        assertThat(awcyStrong.listAfterCreate()).isEqualTo(0);
-        assertThat(awcyEventual.listAfterCreate()).isEqualTo(ITERATIONS);
-    }
+	@Test
+	public void testReadAfterOverwrite() throws Exception {
+		assertThat(awcyStrong.readAfterOverwrite()).isEqualTo(0);
+		assertThat(awcyEventual.readAfterOverwrite()).isEqualTo(0);
+	}
 
-    @Test
-    public void testListAfterDelete() throws Exception {
-        assertThat(awcyStrong.listAfterDelete()).isEqualTo(0);
-        assertThat(awcyEventual.listAfterDelete()).isEqualTo(ITERATIONS);
-    }
+	@Test
+	public void testListAfterCreate() throws Exception {
+		assertThat(awcyStrong.listAfterCreate()).isEqualTo(0);
+		assertThat(awcyEventual.listAfterCreate()).isEqualTo(0);
+	}
+
+	@Test
+	public void testListAfterDelete() throws Exception {
+		assertThat(awcyStrong.listAfterDelete()).isEqualTo(0);
+		assertThat(awcyEventual.listAfterDelete()).isEqualTo(0);
+	}
 }
